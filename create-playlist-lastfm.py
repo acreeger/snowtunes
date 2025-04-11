@@ -268,7 +268,7 @@ def build_playlist_from_lastfm_tag(tag, selected_mode, limit=20, existing=None, 
             print("❗ Please enter 'y' or 'n'.")
         if confirm == 'y':
             sp.playlist_add_items(playlist_id=existing['id'], items=new_tracks)
-            print(f"✅ Added {len(new_tracks)} new tracks to playlist '{existing['name']}'")
+            print(f"✅ Added {len(new_tracks)} new track{'s' if len(new_tracks) != 1 else ''} to playlist '{existing['name']}'")
         else:
             print("❌ Operation canceled.")
         return
@@ -283,9 +283,89 @@ def build_playlist_from_lastfm_tag(tag, selected_mode, limit=20, existing=None, 
     if confirm == 'y':
         playlist = sp.user_playlist_create(user=SPOTIFY_USERNAME, name=playlist_name, public=False)
         sp.playlist_add_items(playlist_id=playlist['id'], items=matched_ids)
-        print(f"✅ Created playlist '{playlist_name}' with {len(matched_ids)} tracks!")
+        print(f"✅ Created playlist '{playlist_name}' with {len(matched_ids)} track{'s' if len(matched_ids) != 1 else ''}!")
     else:
         print("❌ Operation canceled.")
+
+def run_management_mode(selected_mode, playlist_name, skiplist_name):
+    while True:
+        print(f"\n🎛️  Vibe Playlist Manager — '{selected_mode.title()}'")
+        print("1. View current playlist")
+        print("2. Select tracks to skip")
+        print("3. View ⛔ Skips list")
+        print("4. Unskip a track")
+        print("5. Exit")
+        choice = input("Choose an action: ")
+        # === Option 1: View current playlist ===
+        if choice == '1':
+            pl = get_existing_playlist(playlist_name)
+            if pl:
+                items = sp.playlist_items(pl['id'])['items']
+                print(f"\n🎵 {len(items)} tracks in '{pl['name']}':")
+                for idx, item in enumerate(items, 1):
+                    print(f"{idx}. {item['track']['name']} by {item['track']['artists'][0]['name']}")
+            else:
+                print("⚠️ Playlist not found.")
+        # === Option 2: Select tracks to skip ===
+        elif choice == '2':
+            pl = get_existing_playlist(playlist_name)
+            skiplist = get_existing_playlist(skiplist_name)
+            if not skiplist:
+                skiplist = sp.user_playlist_create(user=SPOTIFY_USERNAME, name=skiplist_name, public=False)
+                print(f"✅ Created skiplist '{skiplist_name}'")
+            if pl:
+                items = sp.playlist_items(pl['id'])['items']
+                print("\nSelect tracks to skip (comma-separated numbers):")
+                for idx, item in enumerate(items, 1):
+                    print(f"{idx}. {item['track']['name']} by {item['track']['artists'][0]['name']}")
+                indices = input("Tracks to skip: ")
+                try:
+                    selected = [int(i.strip()) - 1 for i in indices.split(',')]
+                    tracks_to_skip = [items[i]['track']['id'] for i in selected if 0 <= i < len(items)]
+                    if tracks_to_skip:
+                        sp.playlist_add_items(skiplist['id'], tracks_to_skip)
+                        print(f"✅ Added {len(tracks_to_skip)} track{'s' if len(tracks_to_skip) != 1 else ''} to skiplist.")
+                        sp.playlist_remove_all_occurrences_of_items(pl['id'], tracks_to_skip)
+                        print(f"🗑️ Removed {len(tracks_to_skip)} track{'s' if len(tracks_to_skip) != 1 else ''} from '{playlist_name}'")
+                except ValueError:
+                    print("❗ Invalid input.")
+            else:
+                print("⚠️ Playlist not found.")
+        # === Option 3: View skiplist contents ===
+        elif choice == '3':
+            skiplist = get_existing_playlist(skiplist_name)
+            if skiplist:
+                items = sp.playlist_items(skiplist['id'])['items']
+                print(f"\n⛔ {len(items)} tracks in skiplist '{skiplist_name}':")
+                for idx, item in enumerate(items, 1):
+                    print(f"{idx}. {item['track']['name']} by {item['track']['artists'][0]['name']}")
+            else:
+                print("⚠️ Skiplist not found.")
+        # === Option 4: Unskip a track ===
+        elif choice == '4':
+            skiplist = get_existing_playlist(skiplist_name)
+            if skiplist:
+                items = sp.playlist_items(skiplist['id'])['items']
+                print("\nSelect tracks to unskip (comma-separated numbers):")
+                for idx, item in enumerate(items, 1):
+                    print(f"{idx}. {item['track']['name']} by {item['track']['artists'][0]['name']}")
+                indices = input("Tracks to remove: ")
+                try:
+                    selected = [int(i.strip()) - 1 for i in indices.split(',')]
+                    tracks_to_remove = [items[i]['track']['uri'] for i in selected if 0 <= i < len(items)]
+                    if tracks_to_remove:
+                        sp.playlist_remove_all_occurrences_of_items(skiplist['id'], tracks_to_remove)
+                        print(f"✅ Removed {len(tracks_to_remove)} track{'s' if len(tracks_to_remove) != 1 else ''} from skiplist.")
+                except ValueError:
+                    print("❗ Invalid input.")
+            else:
+                print("⚠️ Skiplist not found.")
+        # === Option 5: Exit management mode ===
+        elif choice == '5':
+            print("👋 Exiting management mode.")
+            exit(0)
+        else:
+            print("❗ Invalid option. Please try again.")
 
 # === RUN ===
 if __name__ == '__main__':
@@ -293,6 +373,7 @@ if __name__ == '__main__':
     parser.add_argument('--limit', type=int, default=20, help='Number of tracks to fetch (default: 20)')
     parser.add_argument('--debug', action='store_true', help='Enable debug logging')
     parser.add_argument('--debug-match', action='store_true', help='Enable detailed match logging')
+    parser.add_argument('--manage', action='store_true', help='Enter playlist management mode for the selected vibe')
     args = parser.parse_args()
     DEBUG = args.debug or True
     DEBUG_MATCH = args.debug_match
@@ -323,5 +404,8 @@ if __name__ == '__main__':
     existing = get_existing_playlist(playlist_name)
     if DEBUG:
         print(f"[DEBUG] Playlist lookup for '{playlist_name}': {'FOUND' if existing else 'NOT FOUND'}")
+
+    if args.manage:
+        run_management_mode(selected_mode, playlist_name, skiplist_name)
 
     build_playlist_from_lastfm_tag(selected_tag, selected_mode, args.limit, existing, skiplist)
