@@ -448,7 +448,7 @@ if __name__ == '__main__':
     parser.add_argument('--debug-match', action='store_true', help='Enable detailed match logging')
     parser.add_argument('--manage', action='store_true', help='Enter playlist management mode for the selected vibe')
     args = parser.parse_args()
-    DEBUG = args.debug or True
+    DEBUG = args.debug
     DEBUG_MATCH = args.debug_match
 
     print("🎿 Choose a riding mode:")
