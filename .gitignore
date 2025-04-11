@@ -5,6 +5,7 @@ __pycache__/
 
 # OAuth token caches
 .cache*
+.cache_lastfm/
 
 #dotenv
 .env
