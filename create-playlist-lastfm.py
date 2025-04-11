@@ -165,8 +165,10 @@ def get_existing_playlist(name):
         print(f"[DEBUG] Running fallback search for playlist: {name}")
     search_results = sp.search(q=name, type='playlist', limit=10)
     for result in search_results.get('playlists', {}).get('items', []):
+        if not result or not result.get('name') or not result.get('owner'):
+            continue
         result_name = result['name'].strip().lower()
-        result_owner = result['owner']['id']
+        result_owner = result['owner'].get('id', '')
         if DEBUG:
             print(f"[DEBUG] Fallback result: '{result['name']}' by {result_owner}")
         if result_name == target_name and result_owner == SPOTIFY_USERNAME:
@@ -193,28 +195,39 @@ def get_top_artists_from_liked(limit=10):
     return [artist_id for artist_id, _ in sorted_artists[:limit]]
 
 # === PIPELINE ===
-def build_playlist_from_lastfm_tag(tag, selected_mode, limit=20, existing=None):
+def build_playlist_from_lastfm_tag(tag, selected_mode, limit=20, existing=None, skiplist=None):
     print("🎯 Generating recommendations based on your Liked Songs and vibe tag...")
     genre_tags = GENRE_TAGS.get(selected_mode, [tag])
     liked = get_liked_tracks(max_total=200)
-    seed_tracks = []
+    matched_ids = []
+    
+    skip_ids = set()
+    if skiplist:
+        skip_tracks = sp.playlist_items(skiplist['id'])['items']
+        skip_ids = {item['track']['id'] for item in skip_tracks if item['track']}
+        if DEBUG:
+            print(f"[DEBUG] Loaded {len(skip_ids)} track(s) from skiplist")
+
     for item in liked:
         name = item['track']['name']
         artist = item['track']['artists'][0]['name']
         if track_matches_vibe(name, artist, genre_tags):
-            seed_tracks.append((name, artist))
+            matched_ids.append((name, artist))
             if DEBUG_MATCH:
                 print(f"[DEBUG] ✅ Vibe match found in liked songs: {name} by {artist}")
-    print(f"🎯 Found {len(seed_tracks)} vibe-aligned liked tracks")
+    print(f"🎯 Found {len(matched_ids)} vibe-aligned liked tracks")
 
-    matched_ids = []
+    seed_tracks = matched_ids[:]
     for name, artist in seed_tracks[:5]:
         similar = get_similar_tracks(name, artist, limit=5)
         for title, similar_artist in similar:
             track_id = find_spotify_track_id(title, similar_artist)
-            if track_id and track_id not in matched_ids:
-                print(f"🎧 Similar: {title} by {similar_artist}")
-                matched_ids.append(track_id)
+            if track_id:
+                if track_id in skip_ids:
+                    print(f"🚫 Skipped (in skiplist): {title} by {similar_artist}")
+                elif track_id not in matched_ids:
+                    print(f"🎧 Similar: {title} by {similar_artist}")
+                    matched_ids.append(track_id)
             if len(matched_ids) >= limit:
                 break
         if len(matched_ids) >= limit:
@@ -229,9 +242,12 @@ def build_playlist_from_lastfm_tag(tag, selected_mode, limit=20, existing=None):
             if len(matched_ids) >= limit:
                 break
             track_id = find_spotify_track_id(title, artist)
-            if track_id and track_id not in matched_ids:
-                print(f"✨ Fallback: {title} by {artist}")
-                matched_ids.append(track_id)
+            if track_id:
+                if track_id in skip_ids:
+                    print(f"🚫 Skipped (in skiplist): {title} by {artist}")
+                elif track_id not in matched_ids:
+                    print(f"✨ Fallback: {title} by {artist}")
+                    matched_ids.append(track_id)
             time.sleep(0.2)
 
     if not matched_ids:
@@ -299,8 +315,13 @@ if __name__ == '__main__':
     selected_tag = VIBES[selected_mode]
     
     playlist_name = f"Snowboarding Vibe: {selected_mode.title()}"
+    skiplist_name = f"{playlist_name} ⛔ Skips"
+    skiplist = get_existing_playlist(skiplist_name)
+    if DEBUG:
+        print(f"[DEBUG] Skiplist lookup for '{skiplist_name}': {'FOUND' if skiplist else 'NOT FOUND'}")
+    
     existing = get_existing_playlist(playlist_name)
     if DEBUG:
         print(f"[DEBUG] Playlist lookup for '{playlist_name}': {'FOUND' if existing else 'NOT FOUND'}")
 
-    build_playlist_from_lastfm_tag(selected_tag, selected_mode, args.limit, existing)
+    build_playlist_from_lastfm_tag(selected_tag, selected_mode, args.limit, existing, skiplist)
