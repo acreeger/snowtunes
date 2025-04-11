@@ -396,11 +396,12 @@ def run_management_mode(selected_mode, playlist_name, skiplist_name):
                     if tracks_to_remove:
                         sp.playlist_remove_all_occurrences_of_items(skiplist['id'], tracks_to_remove)
                         print(f"✅ Removed {len(tracks_to_remove)} track{'s' if len(tracks_to_remove) != 1 else ''} from skiplist.")
+                        sp.playlist_add_items(pl['id'], tracks_to_remove)
+                        print(f"🎵 Restored {len(tracks_to_remove)} track{'s' if len(tracks_to_remove) != 1 else ''} to playlist '{playlist_name}'")
                 except ValueError:
                     print("❗ Invalid input.")
             else:
                 print("⚠️ Skiplist not found.")
-        # === Option 5: Exit management mode ===
         elif choice == '5':
             artist_skiplist_name = f"{playlist_name} ⛔ Artist Skips"
             artist_skiplist = get_existing_playlist(artist_skiplist_name)
@@ -430,6 +431,7 @@ def run_management_mode(selected_mode, playlist_name, skiplist_name):
                     print("❗ Invalid input.")
             else:
                 print("⚠️ Artist skiplist not found.")
+        # === Option 7: Exit management mode ===
         elif choice == '7':
             print("👋 Exiting management mode.")
             exit(0)
