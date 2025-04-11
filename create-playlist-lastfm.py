@@ -402,6 +402,7 @@ def run_management_mode(selected_mode, playlist_name, skiplist_name):
                     print("❗ Invalid input.")
             else:
                 print("⚠️ Skiplist not found.")
+        # === Option 5: View artist skiplist ===
         elif choice == '5':
             artist_skiplist_name = f"{playlist_name} ⛔ Artist Skips"
             artist_skiplist = get_existing_playlist(artist_skiplist_name)
@@ -412,6 +413,7 @@ def run_management_mode(selected_mode, playlist_name, skiplist_name):
                     print(f"{idx}. {item['track']['name']} by {item['track']['artists'][0]['name']}")
             else:
                 print("⚠️ Artist skiplist not found.")
+        # === Option 6: Unskip an artist ===
         elif choice == '6':
             artist_skiplist_name = f"{playlist_name} ⛔ Artist Skips"
             artist_skiplist = get_existing_playlist(artist_skiplist_name)
