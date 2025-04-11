@@ -200,6 +200,7 @@ def build_playlist_from_lastfm_tag(tag, selected_mode, limit=20, existing=None, 
     genre_tags = GENRE_TAGS.get(selected_mode, [tag])
     liked = get_liked_tracks(max_total=200)
     matched_ids = []
+    matched_pairs = []
     
     skip_ids = set()
     if skiplist:
@@ -207,27 +208,42 @@ def build_playlist_from_lastfm_tag(tag, selected_mode, limit=20, existing=None, 
         skip_ids = {item['track']['id'] for item in skip_tracks if item['track']}
         if DEBUG:
             print(f"[DEBUG] Loaded {len(skip_ids)} track(s) from skiplist")
+    artist_skiplist_name = f"Snowboarding Vibe: {selected_mode.title()} ⛔ Artist Skips"
+    artist_skiplist = get_existing_playlist(artist_skiplist_name)
+    skip_artist_ids = set()
+    if artist_skiplist:
+        artist_skip_tracks = sp.playlist_items(artist_skiplist['id'])['items']
+        for item in artist_skip_tracks:
+            if item['track']:
+                for artist in item['track']['artists']:
+                    skip_artist_ids.add(artist['id'])
+        print(f"🚫 Found {len(skip_artist_ids)} skipped artist(s)")
 
     for item in liked:
         name = item['track']['name']
         artist = item['track']['artists'][0]['name']
         if track_matches_vibe(name, artist, genre_tags):
-            matched_ids.append((name, artist))
-            if DEBUG_MATCH:
-                print(f"[DEBUG] ✅ Vibe match found in liked songs: {name} by {artist}")
+            track_id = find_spotify_track_id(name, artist)
+            if track_id and track_id not in matched_ids:
+                matched_ids.append(track_id)
+                matched_pairs.append((name, artist))
+                if DEBUG_MATCH:
+                    print(f"[DEBUG] ✅ Vibe match found in liked songs: {name} by {artist}")
     print(f"🎯 Found {len(matched_ids)} vibe-aligned liked tracks")
 
     seed_tracks = matched_ids[:]
-    for name, artist in seed_tracks[:5]:
+    for name, artist in matched_pairs[:5]:
         similar = get_similar_tracks(name, artist, limit=5)
         for title, similar_artist in similar:
             track_id = find_spotify_track_id(title, similar_artist)
             if track_id:
                 if track_id in skip_ids:
-                    print(f"🚫 Skipped (in skiplist): {title} by {similar_artist}")
+                        print(f"🚫 Skipped (in skiplist): {title} by {similar_artist}")
+                elif any(artist['id'] in skip_artist_ids for artist in sp.track(track_id)['artists']):
+                        print(f"🚫 Skipped (artist blocked): {title} by {similar_artist}")
                 elif track_id not in matched_ids:
-                    print(f"🎧 Similar: {title} by {similar_artist}")
-                    matched_ids.append(track_id)
+                        print(f"🎧 Similar: {title} by {similar_artist}")
+                        matched_ids.append(track_id)
             if len(matched_ids) >= limit:
                 break
         if len(matched_ids) >= limit:
@@ -244,10 +260,12 @@ def build_playlist_from_lastfm_tag(tag, selected_mode, limit=20, existing=None, 
             track_id = find_spotify_track_id(title, artist)
             if track_id:
                 if track_id in skip_ids:
-                    print(f"🚫 Skipped (in skiplist): {title} by {artist}")
+                        print(f"🚫 Skipped (in skiplist): {title} by {artist}")
+                elif any(artist_data['id'] in skip_artist_ids for artist_data in sp.track(track_id)['artists']):
+                        print(f"🚫 Skipped (artist blocked): {title} by {artist}")
                 elif track_id not in matched_ids:
-                    print(f"✨ Fallback: {title} by {artist}")
-                    matched_ids.append(track_id)
+                        print(f"✨ Fallback: {title} by {artist}")
+                        matched_ids.append(track_id)
             time.sleep(0.2)
 
     if not matched_ids:
@@ -294,7 +312,9 @@ def run_management_mode(selected_mode, playlist_name, skiplist_name):
         print("2. Select tracks to skip")
         print("3. View ⛔ Skips list")
         print("4. Unskip a track")
-        print("5. Exit")
+        print("5. View ⛔ Artist Skiplist")
+        print("6. Unskip an artist")
+        print("7. Exit")
         choice = input("Choose an action: ")
         # === Option 1: View current playlist ===
         if choice == '1':
@@ -323,10 +343,30 @@ def run_management_mode(selected_mode, playlist_name, skiplist_name):
                     selected = [int(i.strip()) - 1 for i in indices.split(',')]
                     tracks_to_skip = [items[i]['track']['id'] for i in selected if 0 <= i < len(items)]
                     if tracks_to_skip:
-                        sp.playlist_add_items(skiplist['id'], tracks_to_skip)
-                        print(f"✅ Added {len(tracks_to_skip)} track{'s' if len(tracks_to_skip) != 1 else ''} to skiplist.")
-                        sp.playlist_remove_all_occurrences_of_items(pl['id'], tracks_to_skip)
-                        print(f"🗑️ Removed {len(tracks_to_skip)} track{'s' if len(tracks_to_skip) != 1 else ''} from '{playlist_name}'")
+                        print("❓ Skip just these track(s) or all songs by these artist(s)?")
+                        print("1. Just these track(s)")
+                        print("2. All tracks by these artist(s)")
+                        scope_choice = input("Enter choice (1 or 2): ")
+                        if scope_choice == '2':
+                            artist_skiplist_name = f"{playlist_name} ⛔ Artist Skips"
+                            artist_skiplist = get_existing_playlist(artist_skiplist_name)
+                            if not artist_skiplist:
+                                artist_skiplist = sp.user_playlist_create(user=SPOTIFY_USERNAME, name=artist_skiplist_name, public=False)
+                                print(f"✅ Created artist skiplist '{artist_skiplist_name}'")
+                            artist_track_ids = []
+                            for i in selected:
+                                if 0 <= i < len(items):
+                                    artist_track_ids.append(items[i]['track']['id'])
+                            sp.playlist_add_items(artist_skiplist['id'], artist_track_ids)
+                            print(f"✅ Added {len(artist_track_ids)} artist sample track{'s' if len(artist_track_ids) != 1 else ''} to artist skiplist.")
+                            sp.playlist_remove_all_occurrences_of_items(pl['id'], artist_track_ids)
+                            print(f"🗑️ Removed {len(artist_track_ids)} track{'s' if len(artist_track_ids) != 1 else ''} from '{playlist_name}'")
+                            continue  # Skip the track-level skip logic
+                        else:
+                            sp.playlist_add_items(skiplist['id'], tracks_to_skip)
+                            print(f"✅ Added {len(tracks_to_skip)} track{'s' if len(tracks_to_skip) != 1 else ''} to skiplist.")
+                            sp.playlist_remove_all_occurrences_of_items(pl['id'], tracks_to_skip)
+                            print(f"🗑️ Removed {len(tracks_to_skip)} track{'s' if len(tracks_to_skip) != 1 else ''} from '{playlist_name}'")
                 except ValueError:
                     print("❗ Invalid input.")
             else:
@@ -362,6 +402,35 @@ def run_management_mode(selected_mode, playlist_name, skiplist_name):
                 print("⚠️ Skiplist not found.")
         # === Option 5: Exit management mode ===
         elif choice == '5':
+            artist_skiplist_name = f"{playlist_name} ⛔ Artist Skips"
+            artist_skiplist = get_existing_playlist(artist_skiplist_name)
+            if artist_skiplist:
+                items = sp.playlist_items(artist_skiplist['id'])['items']
+                print(f"\n⛔ {len(items)} artist sample track{'s' if len(items) != 1 else ''} in artist skiplist '{artist_skiplist_name}':")
+                for idx, item in enumerate(items, 1):
+                    print(f"{idx}. {item['track']['name']} by {item['track']['artists'][0]['name']}")
+            else:
+                print("⚠️ Artist skiplist not found.")
+        elif choice == '6':
+            artist_skiplist_name = f"{playlist_name} ⛔ Artist Skips"
+            artist_skiplist = get_existing_playlist(artist_skiplist_name)
+            if artist_skiplist:
+                items = sp.playlist_items(artist_skiplist['id'])['items']
+                print("\nSelect artist sample tracks to remove (comma-separated numbers):")
+                for idx, item in enumerate(items, 1):
+                    print(f"{idx}. {item['track']['name']} by {item['track']['artists'][0]['name']}")
+                indices = input("Tracks to remove: ")
+                try:
+                    selected = [int(i.strip()) - 1 for i in indices.split(',')]
+                    tracks_to_remove = [items[i]['track']['uri'] for i in selected if 0 <= i < len(items)]
+                    if tracks_to_remove:
+                        sp.playlist_remove_all_occurrences_of_items(artist_skiplist['id'], tracks_to_remove)
+                        print(f"✅ Removed {len(tracks_to_remove)} artist sample track{'s' if len(tracks_to_remove) != 1 else ''} from artist skiplist.")
+                except ValueError:
+                    print("❗ Invalid input.")
+            else:
+                print("⚠️ Artist skiplist not found.")
+        elif choice == '7':
             print("👋 Exiting management mode.")
             exit(0)
         else:
