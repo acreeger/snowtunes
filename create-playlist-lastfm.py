@@ -9,6 +9,7 @@ import json
 import re
 from pathlib import Path
 import hashlib
+import random
 
 load_dotenv()
 
@@ -54,7 +55,7 @@ GENRE_TAGS = {
     'sunset': ['ambient', 'post-rock', 'cinematic']
 }
 
-SCOPES = 'playlist-modify-private playlist-modify-public user-library-read'
+SCOPES = 'playlist-read-private playlist-modify-private playlist-modify-public user-library-read'
 scope_hash = hashlib.md5(SCOPES.encode()).hexdigest()[:8]
 CACHE_PATH = f'.cache-{SPOTIFY_USERNAME}-{scope_hash}'
 if os.getenv('DEBUG', 'true').lower() == 'true':
@@ -70,7 +71,7 @@ sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
 ))
 
 # === FETCH FROM LAST.FM ===
-def fetch_lastfm_tracks_by_tag(tag, limit=20):
+def fetch_lastfm_tracks_by_tag(tag, limit=100):
     url = f'https://ws.audioscrobbler.com/2.0/?method=tag.gettoptracks&tag={tag}&limit={limit}&api_key={LASTFM_API_KEY}&format=json'
     response = requests.get(url)
     data = response.json()
@@ -88,7 +89,7 @@ def track_matches_vibe(track_name, artist_name, genre_tags):
         data = response.json()
         cache_set(cache_key, data)
     tags = [tag['name'].lower() for tag in data.get('toptags', {}).get('tag', [])]
-    if DEBUG and any(tag in tags for tag in genre_tags):
+    if DEBUG_MATCH and any(tag in tags for tag in genre_tags):
         print(f"[DEBUG] ✅ '{track_name}' by {artist_name} matched vibe via genre tags:")
         print(f"[DEBUG] ➤ Track tags: {tags}")
         print(f"[DEBUG] ➤ Matched against: {genre_tags}")
@@ -135,16 +136,44 @@ def find_spotify_track_id(track_name, artist_name):
 
 # === CHECK FOR EXISTING PLAYLIST ===
 def get_existing_playlist(name):
+    total_checked = 0
     offset = 0
     while True:
         response = sp.current_user_playlists(limit=50, offset=offset)
+        if DEBUG:
+            print(f"[DEBUG] Fetching playlists with offset {offset}")
         playlists = response['items']
         for pl in playlists:
-            if pl['name'].lower() == name.lower():
+            total_checked += 1
+            pl_name = pl['name'].strip().lower()
+            target_name = name.strip().lower()
+            comparison_result = pl_name == target_name
+            if DEBUG:
+                print(f"[DEBUG] Checking playlist: '{pl['name']}' == '{name}'? ➜ {comparison_result}")
+            if comparison_result:
+                if DEBUG:
+                    print(f"[DEBUG] ✅ Matched playlist: {pl['name']} (ID: {pl['id']})")
                 return pl
-        if response['next'] is None:
+        if not response.get('next'):
             break
         offset += 50
+    if DEBUG:
+        print(f"[DEBUG] Finished checking {total_checked} playlists")
+    
+    # === FALLBACK: Search API ===
+    if DEBUG:
+        print(f"[DEBUG] Running fallback search for playlist: {name}")
+    search_results = sp.search(q=name, type='playlist', limit=10)
+    for result in search_results.get('playlists', {}).get('items', []):
+        result_name = result['name'].strip().lower()
+        result_owner = result['owner']['id']
+        if DEBUG:
+            print(f"[DEBUG] Fallback result: '{result['name']}' by {result_owner}")
+        if result_name == target_name and result_owner == SPOTIFY_USERNAME:
+            if DEBUG:
+                print(f"[DEBUG] ✅ Fallback matched playlist: {result['name']} (ID: {result['id']})")
+            return result
+
     return None
 
 # === GET LIKED SONGS' TOP ARTISTS ===
@@ -164,7 +193,7 @@ def get_top_artists_from_liked(limit=10):
     return [artist_id for artist_id, _ in sorted_artists[:limit]]
 
 # === PIPELINE ===
-def build_playlist_from_lastfm_tag(tag, selected_mode, limit=20):
+def build_playlist_from_lastfm_tag(tag, selected_mode, limit=20, existing=None):
     print("🎯 Generating recommendations based on your Liked Songs and vibe tag...")
     genre_tags = GENRE_TAGS.get(selected_mode, [tag])
     liked = get_liked_tracks(max_total=200)
@@ -174,7 +203,7 @@ def build_playlist_from_lastfm_tag(tag, selected_mode, limit=20):
         artist = item['track']['artists'][0]['name']
         if track_matches_vibe(name, artist, genre_tags):
             seed_tracks.append((name, artist))
-            if DEBUG:
+            if DEBUG_MATCH:
                 print(f"[DEBUG] ✅ Vibe match found in liked songs: {name} by {artist}")
     print(f"🎯 Found {len(seed_tracks)} vibe-aligned liked tracks")
 
@@ -193,7 +222,9 @@ def build_playlist_from_lastfm_tag(tag, selected_mode, limit=20):
 
     if len(matched_ids) < limit:
         print(f"🔄 Adding fallback tracks from Last.fm for tag '{tag}'...")
-        lastfm_tracks = fetch_lastfm_tracks_by_tag(tag, limit)
+        lastfm_tracks = fetch_lastfm_tracks_by_tag(tag, limit * 5)
+        random.shuffle(lastfm_tracks)
+        lastfm_tracks = list(reversed(lastfm_tracks))
         for title, artist in lastfm_tracks:
             if len(matched_ids) >= limit:
                 break
@@ -207,46 +238,48 @@ def build_playlist_from_lastfm_tag(tag, selected_mode, limit=20):
         print("No tracks found. Playlist not created.")
         return
 
-    playlist_name = f"Snowboarding Vibe: {selected_mode.title()}"
-    existing = get_existing_playlist(playlist_name)
-
     if existing:
-        print(f"ℹ️ Playlist '{playlist_name}' already exists.")
+        print(f"ℹ️ Playlist '{existing['name']}' already exists.")
         existing_track_ids = [item['track']['id'] for item in sp.playlist_items(existing['id'])['items'] if item['track']]
         new_tracks = [tid for tid in matched_ids if tid not in existing_track_ids]
         if not new_tracks:
             print("⚠️ All tracks are already in the playlist. Nothing to add.")
             return
         while True:
-            confirm = input(f"Add {len(new_tracks)} new tracks to existing playlist '{playlist_name}'? (y/n): ").lower()
+            confirm = input(f"Add {len(new_tracks)} new tracks to existing playlist '{existing['name']}'? (y/n): ").lower()
             if confirm in ['y', 'n']:
                 break
             print("❗ Please enter 'y' or 'n'.")
         if confirm == 'y':
             sp.playlist_add_items(playlist_id=existing['id'], items=new_tracks)
-            print(f"✅ Added {len(new_tracks)} new tracks to playlist '{playlist_name}'")
+            print(f"✅ Added {len(new_tracks)} new tracks to playlist '{existing['name']}'")
         else:
             print("❌ Operation canceled.")
+        return
+    
+    # Only reach this if playlist didn't exist
+    playlist_name = f"Snowboarding Vibe: {selected_mode.title()}"
+    while True:
+        confirm = input(f"Create new playlist '{playlist_name}' with {len(matched_ids)} tracks? (y/n): ").lower()
+        if confirm in ['y', 'n']:
+            break
+        print("❗ Please enter 'y' or 'n'.")
+    if confirm == 'y':
+        playlist = sp.user_playlist_create(user=SPOTIFY_USERNAME, name=playlist_name, public=False)
+        sp.playlist_add_items(playlist_id=playlist['id'], items=matched_ids)
+        print(f"✅ Created playlist '{playlist_name}' with {len(matched_ids)} tracks!")
     else:
-        while True:
-            confirm = input(f"Create new playlist '{playlist_name}' with {len(matched_ids)} tracks? (y/n): ").lower()
-            if confirm in ['y', 'n']:
-                break
-            print("❗ Please enter 'y' or 'n'.")
-        if confirm == 'y':
-            playlist = sp.user_playlist_create(user=SPOTIFY_USERNAME, name=playlist_name, public=False)
-            sp.playlist_add_items(playlist_id=playlist['id'], items=matched_ids)
-            print(f"✅ Created playlist '{playlist_name}' with {len(matched_ids)} tracks!")
-        else:
-            print("❌ Operation canceled.")
+        print("❌ Operation canceled.")
 
 # === RUN ===
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Build a Spotify playlist from Last.fm vibe tag.")
     parser.add_argument('--limit', type=int, default=20, help='Number of tracks to fetch (default: 20)')
     parser.add_argument('--debug', action='store_true', help='Enable debug logging')
+    parser.add_argument('--debug-match', action='store_true', help='Enable detailed match logging')
     args = parser.parse_args()
     DEBUG = args.debug or True
+    DEBUG_MATCH = args.debug_match
 
     print("🎿 Choose a riding mode:")
     for i, mode in enumerate(VIBES.keys(), 1):
@@ -264,5 +297,10 @@ if __name__ == '__main__':
 
     selected_mode = list(VIBES.keys())[choice - 1]
     selected_tag = VIBES[selected_mode]
+    
+    playlist_name = f"Snowboarding Vibe: {selected_mode.title()}"
+    existing = get_existing_playlist(playlist_name)
+    if DEBUG:
+        print(f"[DEBUG] Playlist lookup for '{playlist_name}': {'FOUND' if existing else 'NOT FOUND'}")
 
-    build_playlist_from_lastfm_tag(selected_tag, selected_mode, args.limit)
+    build_playlist_from_lastfm_tag(selected_tag, selected_mode, args.limit, existing)
