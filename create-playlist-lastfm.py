@@ -218,6 +218,11 @@ def build_playlist_from_lastfm_tag(tag, selected_mode, limit=20, existing=None, 
                 for artist in item['track']['artists']:
                     skip_artist_ids.add(artist['id'])
         print(f"🚫 Found {len(skip_artist_ids)} skipped artist(s)")
+    
+    existing_track_ids = []
+    if existing:
+        print(f"ℹ️ Playlist '{existing['name']}' already exists.")
+        existing_track_ids = [item['track']['id'] for item in sp.playlist_items(existing['id'])['items'] if item['track']]
 
     for item in liked:
         name = item['track']['name']
@@ -241,7 +246,7 @@ def build_playlist_from_lastfm_tag(tag, selected_mode, limit=20, existing=None, 
                         print(f"🚫 Skipped (in skiplist): {title} by {similar_artist}")
                 elif any(artist['id'] in skip_artist_ids for artist in sp.track(track_id)['artists']):
                         print(f"🚫 Skipped (artist blocked): {title} by {similar_artist}")
-                elif track_id not in matched_ids:
+                elif track_id not in matched_ids and track_id not in existing_track_ids:
                         print(f"🎧 Similar: {title} by {similar_artist}")
                         matched_ids.append(track_id)
             if len(matched_ids) >= limit:
@@ -263,7 +268,7 @@ def build_playlist_from_lastfm_tag(tag, selected_mode, limit=20, existing=None, 
                         print(f"🚫 Skipped (in skiplist): {title} by {artist}")
                 elif any(artist_data['id'] in skip_artist_ids for artist_data in sp.track(track_id)['artists']):
                         print(f"🚫 Skipped (artist blocked): {title} by {artist}")
-                elif track_id not in matched_ids:
+                elif track_id not in matched_ids and track_id not in existing_track_ids:
                         print(f"✨ Fallback: {title} by {artist}")
                         matched_ids.append(track_id)
             time.sleep(0.2)
@@ -273,9 +278,14 @@ def build_playlist_from_lastfm_tag(tag, selected_mode, limit=20, existing=None, 
         return
 
     if existing:
-        print(f"ℹ️ Playlist '{existing['name']}' already exists.")
-        existing_track_ids = [item['track']['id'] for item in sp.playlist_items(existing['id'])['items'] if item['track']]
         new_tracks = [tid for tid in matched_ids if tid not in existing_track_ids]
+        if DEBUG:
+            print("[DEBUG] New tracks to be added:")
+            for tid in new_tracks:
+                track = sp.track(tid)
+                name = track['name']
+                artist = track['artists'][0]['name']
+                print(f"[DEBUG] ➕ {name} by {artist}")
         if not new_tracks:
             print("⚠️ All tracks are already in the playlist. Nothing to add.")
             return
