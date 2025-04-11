@@ -1,0 +1,13 @@
+# Python virtual environment
+.venv/
+__pycache__/
+*.pyc
+
+# OAuth token caches
+.cache*
+
+#dotenv
+.env
+
+# VS Code settings
+.vscode/
