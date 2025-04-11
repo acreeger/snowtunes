@@ -3,6 +3,7 @@ from spotipy.oauth2 import SpotifyOAuth
 from dotenv import load_dotenv
 import os
 import argparse
+from urllib.parse import urlencode
 
 load_dotenv()
 
@@ -47,24 +48,25 @@ print("🛂 Scopes granted:", token_info.get('scope'))
 
 # === FETCH & FILTER TRACKS ===
 print("🔍 Searching for tracks...")
-genre_filter = args.genre
-year_range = args.years
-query = f'genre:\"{genre_filter}\" year:{year_range}' if genre_filter else f'year:{year_range}'
-results = sp.search(q=query, type='track', limit=50, market='US')
-print(f"🔍 Found {len(results['tracks']['items'])} tracks matching the criteria.")
+genre_filter = [g.strip() for g in args.genre.split(',')] if args.genre else ['pop', 'rock', 'indie']
 candidates = []
 
-for item in results['tracks']['items']:
-    track_id = item['id']
-    try:
-        audio = sp.gi(track_id)[0]
-        if audio and TARGET_BPM - BPM_TOLERANCE <= audio['tempo'] <= TARGET_BPM + BPM_TOLERANCE:
-            print(f"🎵 {item['name']} - {item['artists'][0]['name']} ({round(audio['tempo'])} BPM)")
-            candidates.append(track_id)
-            if len(candidates) >= TRACK_LIMIT:
-                break
-    except spotipy.exceptions.SpotifyException as e:
-        print(f"⚠️  Skipping track '{item['name']}' due to API error: {e}")
+query_params = [
+    ('limit', TRACK_LIMIT),
+    ('market', 'US'),
+    ('target_tempo', TARGET_BPM)
+] + [('seed_genres', genre) for genre in genre_filter]
+
+query_string = urlencode(query_params)
+url = f"https://api.spotify.com/v1/recommendations?{query_string}"
+
+print(f"📡 Requesting: {url}")
+
+recommendations = sp._get(url)
+
+for item in recommendations['tracks']:
+    print(f"🎵 {item['name']} - {item['artists'][0]['name']}")
+    candidates.append(item['id'])
 
 # === CREATE PLAYLIST ===
 if not candidates:
